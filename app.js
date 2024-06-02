@@ -1,14 +1,15 @@
-const express = require("express");
-const cors = require("cors");
-const movies = require('./movies.json');
-const crypto = require('node:crypto');
-const fs = require('fs');
-const { validateMovie, validatePartialMovie } = require('./schemas/validationMovie');
+import express, { json } from "express";
+import cors from "cors";
+import { readJSON } from './utilities/readJSON.js'
+import { randomUUID } from 'node:crypto';
+import { writeFile } from 'node:fs/promises';
+import { validateMovie, validatePartialMovie } from './schemas/validationMovie.js';
 const moviesFile = './movies.json'
+const movies = readJSON('./movies.json')
 
 const app = express()
 app.disable('x-powered-by')
-app.use(express.json())
+app.use(json())
 
 const port = process.env.PORT ?? 3000
 
@@ -49,7 +50,7 @@ app.get('/movies/:id', (req, res) => {
         : res.status(404).json({ message: 'La película solicitada no existe.' })
 })
 
-app.patch('/movies/:id', (req, res) => {
+app.patch('/movies/:id', async (req, res) => {
     const { id } = req.params
     const indexMovie = movies.findIndex(movie => movie.id == id)
     if (indexMovie == -1)
@@ -59,78 +60,60 @@ app.patch('/movies/:id', (req, res) => {
 
     if (!isValidPartialMovieData.success) {
         const errors = isValidPartialMovieData.error.formErrors.fieldErrors
-        res.status(422).json(errors)
-    } else {
-        const updateMovie = {
-            ...movies[indexMovie],
-            ...isValidPartialMovieData.data
-        }
+        return res.status(422).json(errors)
+    }
 
-        fs.readFile(moviesFile, (error, data) => {
-            if (error)
-                return res.status(500).json({ message: 'Hubo un error al leer el archivo.' })
+    movies[indexMovie] = {
+        ...movies[indexMovie],
+        ...isValidPartialMovieData.data
+    }
 
-            const movies = JSON.parse(data)
-            movies[indexMovie] = updateMovie
-            fs.writeFile(moviesFile, JSON.stringify(movies, null, 2), (error) => {
-                error
-                    ? res.status(500).json({ message: 'Hubo un error al intentar guardar la información.' })
-                    : res.status(200).json({ data: movies[indexMovie] })
-            })
-        })
+    try {
+        await writeFile(moviesFile, JSON.stringify(movies, null, 2))
+        res.status(200).json({ data: movies[indexMovie], message: "La película se modificó correctamente." })
+    } catch {
+        res.status(500).json({ message: 'Hubo un error al procesar la información.' })
     }
 })
 
-app.delete('/movies/:id', (req, res) => {
+app.delete('/movies/:id', async (req, res) => {
+
     const { id } = req.params
     const indexMovie = movies.findIndex(el => el.id == id)
     if (indexMovie == -1)
         return res.status(404).json({ message: 'El id no coincide con algún elemento.' })
 
     const deletedMovie = movies.splice(indexMovie, 1)
-
     if (!deletedMovie.length)
         return res.status(500).json({ message: 'Hubo un error al intentar eliminar la información.' })
 
-    fs.readFile(moviesFile, (error, data) => {
-        if (error)
-            return res.status(500).json({ message: 'Hubo un error al leer el archivo.' })
-
-        const movies = JSON.parse(data)
-        movies.splice(indexMovie, 1)
-
-        fs.writeFile(moviesFile, JSON.stringify(movies, null, 2), (error) => {
-            error
-                ? res.status(500).json({ message: 'Hubo un error al intentar eliminar la información.' })
-                : res.status(200).json({ message: 'La información se eliminó de manera correcta.' })
-        })
-    })
+    try {
+        await writeFile(moviesFile, JSON.stringify(movies, null, 2))
+        res.status(200).json({ message: 'La información se eliminó de manera correcta.' })
+    } catch (error) {
+        res.status(500).json({ message: 'Hubo un error al procesar la información.' })
+    }
 })
 
-app.post('/movies', (req, res) => {
+app.post('/movies', async (req, res) => {
     const isValidMovie = validateMovie(req.body)
     if (!isValidMovie.success) {
         const errors = isValidMovie.error.formErrors.fieldErrors
-        res.status(422).json(errors)
-    } else {
-        const newMovie = {
-            id: crypto.randomUUID(),
-            ...isValidMovie.data
-        }
+        return res.status(422).json({data: errors, message: 'La información contiene errores.'})
+    }
 
-        fs.readFile('./movies.json', (err, data) => {
-            if (err)
-                return res.status(500).json({ message: 'Hubo un error al intentar leer el archivo.' })
+    const newMovie = {
+        id: randomUUID(),
+        ...isValidMovie.data
+    }
 
-            let movies = JSON.parse(data)
-            movies.push(newMovie)
+    movies.push(newMovie)
 
-            fs.writeFile('./movies.json', JSON.stringify(movies, null, 2), (error) => {
-                error
-                    ? res.status(500).json({ message: 'Hubo un error al intentar guardar la información.' })
-                    : res.status(201).json({ data: newMovie })
-            })
-        });
+    try {
+        await writeFile(moviesFile, JSON.stringify(movies, null, 2))
+        res.status(201).json({ data: newMovie, message: 'La película se agregó de manera correcta.' })
+    } catch (error) {
+        res.status(500).json({ message: 'Hubo un error al procesar la información.' })
     }
 })
 
